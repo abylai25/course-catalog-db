@@ -81,6 +81,30 @@ The ten deliberate failures are listed below. Run the commands one at a time
 with `\set VERBOSITY verbose`; the restriction-delete SQLSTATE is version
 dependent.
 
+Run each statement separately after a fresh `schema.sql` and `seed.sql`, so
+each violation is isolated and the existing rows remain intact:
+
+```sql
+\set VERBOSITY verbose
+INSERT INTO courses (id, title, description, credits)
+VALUES ('x-test', NULL, 'Test', 3);
+INSERT INTO courses (id, title, description, credits)
+VALUES ('x-test', 'Test', 'Test', 0);
+UPDATE courses SET likes = -1 WHERE id = 'api-design';
+INSERT INTO students (name, email) VALUES ('A', 'a@example.com');
+INSERT INTO students (name, email)
+VALUES ('Dup Student', 'aigerim@example.com');
+INSERT INTO courses (id, title, description, credits)
+VALUES ('api-design', 'x', 'y', 1);
+INSERT INTO enrollments (course_id, student_id)
+VALUES ('modern-frontend', 1);
+INSERT INTO enrollments (course_id, student_id)
+VALUES ('no-such-course', 1);
+INSERT INTO enrollments (course_id, student_id)
+VALUES ('web-security', 999);
+DELETE FROM courses WHERE id = 'modern-frontend';
+```
+
 | # | What we violate | SQLSTATE | Constraint | API response |
 |---|-----------------|----------|------------|--------------|
 | 1 | NULL in `courses.title` | `23502` | NOT NULL (column `title`; no named constraint) | 422; if Pydantic allowed a missing required title through, that is an application bug (500) |
@@ -94,6 +118,12 @@ dependent.
 | 9 | enrollment for nonexistent student | `23503` | `enrollments_student_id_fkey` | 404 Not Found |
 | 10 | delete a course that has enrollments | `23001` (PostgreSQL 18); `23503` (16–17) | `enrollments_course_id_fkey` | 409 Conflict |
 | 11 | delete a student with enrollments (cascade) | No error | `enrollments_student_id_fkey` (`ON DELETE CASCADE`) | Successful deletion; 6 enrollments become 3; after `ROLLBACK`, 6 again |
+
+For row 11, run `BEGIN;`, count enrollments (6), delete Daniyar with
+`DELETE FROM students WHERE email = 'daniyar@example.com';`, then count again
+(3) and `ROLLBACK;`; the final count is 6. The violation commands and their
+SQLSTATEs above are the expected results from the handout, not local psql
+output; this workspace has no PostgreSQL server available to execute them.
 
 Pydantic validation and database constraints are intentionally duplicated.
 The API can reject bad requests early and return a useful 422, but other clients,
