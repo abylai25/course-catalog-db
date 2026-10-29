@@ -156,6 +156,44 @@ Answers to the questions:
 3. The index accelerates retrieving one student's enrollments and locating
    dependent enrollment rows when a student is deleted with `ON DELETE CASCADE`.
 
+## Transaction
+
+The experiment enrolls a new student using two inserts: create the student,
+then create an enrollment referencing that student. If the second statement
+fails, PostgreSQL marks the transaction aborted (`!>` in the `psql` prompt);
+further statements are rejected until `ROLLBACK`. Rolling back removes the
+first insert as well, so no student is left without the intended enrollment.
+Without an explicit transaction, the first insert would already be committed
+and the failed second insert would leave partial data.
+
+To reproduce the failure on the main database:
+
+```sql
+BEGIN;
+INSERT INTO students (name, email)
+VALUES ('Madina Ospanova', 'madina@example.com');
+INSERT INTO enrollments (course_id, student_id)
+SELECT 'no-such-course', id FROM students
+WHERE email = 'madina@example.com';
+-- Foreign-key error; psql reports that the transaction is aborted.
+ROLLBACK;
+SELECT count(*) FROM students WHERE email = 'madina@example.com';
+-- 0 rows
+```
+
+For the successful two-window version, run the student insert and a valid
+enrollment insert (`web-security`) in window A after `BEGIN`, but do not commit.
+Window B, connected to the same database, sees `0` rows for
+`madina@example.com`. After `COMMIT` in window A, rerun the query in window B:
+it sees `1` row, and both the student and enrollment become visible together.
+`SHOW default_transaction_isolation;` reports `read committed`, the default
+isolation level; each statement sees rows committed before that statement
+began.
+
+The transaction tests above were documented from the lab's expected behavior,
+not executed locally: this environment has no `psql` installation and its
+Docker PostgreSQL daemon is not running.
+
 ## Self-review against the checklist
 
 | What to check | Result |
